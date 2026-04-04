@@ -8,6 +8,7 @@ venv/
 .env
 settings.json
 session_state.md
+planejamentodoarquiteto.md
 
 # Proteção de Saídas (Evitar commitar textos de OCR)
 output/
