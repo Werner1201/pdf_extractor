@@ -16,6 +16,12 @@ OUTPUT_JSON = os.path.join(OUTPUT_DIR, "questoes.json")
 OUTPUT_JSON_REFINED = os.path.join(OUTPUT_DIR, "questoes_refinadas.json")
 OUTPUT_TXT = os.path.join(OUTPUT_DIR, "ocr_texto_bruto.txt")
 
+# Video Capture Settings
+VIDEO_TEMP_DIR = os.path.join(OUTPUT_DIR, "frames_temp")
+VIDEO_OUTPUT_PDF = os.path.join(OUTPUT_DIR, "video_captura.pdf")
+DEFAULT_SSIM_THRESHOLD = 0.85
+DEFAULT_SAMPLE_INTERVAL = 0.5
+
 # =========================================================
 # OCR
 # =========================================================

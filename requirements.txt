@@ -7,3 +7,5 @@ pdf2image
 google-genai
 python-dotenv
 pyinstaller
+scikit-image
+img2pdf

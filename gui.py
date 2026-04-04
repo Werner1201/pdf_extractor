@@ -10,6 +10,11 @@ from ocr import extrair_texto_do_pdf
 from parser_questoes import processar_todas
 from ai_refiner import refinar_questoes_por_ia, PROMPT_MANUAL
 
+# Phase 0 Imports
+import video_extractor
+import pdf_builder
+from frame_reviewer import FrameReviewer
+
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
 
@@ -27,12 +32,15 @@ class App(ctk.CTk):
         # --- ROOT TABVIEW ---
         self.tabview = ctk.CTkTabview(self)
         self.tabview.pack(fill="both", expand=True, padx=10, pady=10)
+        self.tabview.add("🎥 Captura de Vídeo")
         self.tabview.add("🗂️ Extrator")
         self.tabview.add("🔗 Unificador JSON")
         
+        tab_vid = self.tabview.tab("🎥 Captura de Vídeo")
         tab_ext = self.tabview.tab("🗂️ Extrator")
         tab_uni = self.tabview.tab("🔗 Unificador JSON")
         
+        self._build_video_capture(tab_vid)
         self._build_extrator(tab_ext)
         self._build_unificador(tab_uni)
 
@@ -438,6 +446,150 @@ class App(ctk.CTk):
             self.after(0, lambda msg=err_msg: messagebox.showerror("Erro na Interface de IA", msg))
         
         self.after(0, lambda: self.btn_run_ia.configure(state="normal"))
+
+    # ==========================================
+    # ABA: CAPTURA DE VÍDEO (PHASE 0)
+    # ==========================================
+    def _build_video_capture(self, parent):
+        lbl = ctk.CTkLabel(parent, text="🎥 Assistente de Captura de Vídeo para PDF", font=ctk.CTkFont(size=20, weight="bold"))
+        lbl.pack(pady=(10, 5))
+        
+        lbl_sub = ctk.CTkLabel(parent, text="Extraia frames inteligentes de vídeos de scroll para gerar um PDF pronto para o OCR.", text_color="gray70")
+        lbl_sub.pack(pady=(0, 15))
+        
+        # --- File Selection ---
+        self.frame_vid_file = ctk.CTkFrame(parent)
+        self.frame_vid_file.pack(padx=20, pady=5, fill="x")
+        
+        self.lbl_vid_path = ctk.CTkLabel(self.frame_vid_file, text="Nenhum vídeo (.mp4) selecionado.", wraplength=500)
+        self.lbl_vid_path.pack(side="left", padx=10, pady=10)
+        
+        self.btn_sel_vid = ctk.CTkButton(self.frame_vid_file, text="Selecionar Vídeo MP4", command=self.select_video)
+        self.btn_sel_vid.pack(side="right", padx=10, pady=10)
+        
+        self.video_path = ""
+        
+        # --- Settings (SSIM and Interval) ---
+        self.frame_vid_cfg = ctk.CTkFrame(parent)
+        self.frame_vid_cfg.pack(padx=20, pady=10, fill="x")
+        
+        # Threshold Slider
+        ctk.CTkLabel(self.frame_vid_cfg, text="Sensibilidade de Mudança (SSIM Threshold):", font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, padx=10, pady=(10,0), sticky="w")
+        self.slider_ssim = ctk.CTkSlider(self.frame_vid_cfg, from_=0.70, to=0.98, number_of_steps=28)
+        self.slider_ssim.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
+        self.slider_ssim.set(config.DEFAULT_SSIM_THRESHOLD)
+        
+        self.lbl_ssim_val = ctk.CTkLabel(self.frame_vid_cfg, text=f"{config.DEFAULT_SSIM_THRESHOLD:.2f}")
+        self.lbl_ssim_val.grid(row=1, column=1, padx=10, pady=5)
+        self.slider_ssim.configure(command=lambda v: self.lbl_ssim_val.configure(text=f"{v:.2f}"))
+        
+        # Interval Slider
+        ctk.CTkLabel(self.frame_vid_cfg, text="Intervalo de Amostragem (Segundos):", font=ctk.CTkFont(weight="bold")).grid(row=0, column=2, padx=10, pady=(10,0), sticky="w")
+        self.slider_interval = ctk.CTkSlider(self.frame_vid_cfg, from_=0.1, to=2.0, number_of_steps=19)
+        self.slider_interval.grid(row=1, column=2, padx=10, pady=5, sticky="ew")
+        self.slider_interval.set(config.DEFAULT_SAMPLE_INTERVAL)
+        
+        self.lbl_interval_val = ctk.CTkLabel(self.frame_vid_cfg, text=f"{config.DEFAULT_SAMPLE_INTERVAL:.1f}s")
+        self.lbl_interval_val.grid(row=1, column=3, padx=10, pady=5)
+        self.slider_interval.configure(command=lambda v: self.lbl_interval_val.configure(text=f"{v:.1f}s"))
+
+        self.frame_vid_cfg.grid_columnconfigure(0, weight=1)
+        self.frame_vid_cfg.grid_columnconfigure(2, weight=1)
+        
+        # --- Extraction Button ---
+        self.btn_start_vid = ctk.CTkButton(parent, text="▶️ INICIAR EXTRAÇÃO DE FRAMES", height=50, 
+                                          fg_color="#3498db", hover_color="#2980b9", font=ctk.CTkFont(size=14, weight="bold"),
+                                          command=self.start_video_extraction)
+        self.btn_start_vid.pack(pady=15, padx=20, fill="x")
+        
+        self.progress_vid = ctk.CTkProgressBar(parent)
+        self.progress_vid.pack(padx=20, pady=5, fill="x")
+        self.progress_vid.set(0)
+        
+        self.log_vid = ctk.CTkTextbox(parent, height=150, font=("Consolas", 11))
+        self.log_vid.pack(padx=20, pady=10, fill="both", expand=True)
+        self.log_vid.configure(state="disabled")
+
+    def select_video(self):
+        path = filedialog.askopenfilename(filetypes=[("Video Files", "*.mp4 *.avi *.mkv"), ("All Files", "*.*")])
+        if path:
+            self.video_path = path
+            self.lbl_vid_path.configure(text=f"VÍDEO: {os.path.basename(path)}")
+
+    def start_video_extraction(self):
+        if not self.video_path:
+            messagebox.showwarning("Aviso", "Selecione um vídeo MP4 primeiro!")
+            return
+            
+        self.btn_start_vid.configure(state="disabled")
+        self.log_vid.configure(state="normal")
+        self.log_vid.delete("1.0", "end")
+        self.log_vid.configure(state="disabled")
+        self._write_log(self.log_vid, "--- INICIANDO PROCESSAMENTO DE VÍDEO (FASE 0) ---")
+        self.progress_vid.set(0)
+        
+        threading.Thread(target=self._run_video_extraction, daemon=True).start()
+
+    def _run_video_extraction(self):
+        try:
+            threshold = self.slider_ssim.get()
+            interval = self.slider_interval.get()
+            
+            def progress_cb(msg, cur, tot):
+                self.after(0, lambda: self._update_ui_vid(msg, cur, tot))
+
+            frames = video_extractor.extract_frames(self.video_path, threshold=threshold, interval=interval, progress_callback=progress_cb)
+            
+            if frames:
+                self.after(0, lambda: self._open_reviewer(frames))
+            else:
+                self.after(0, lambda: messagebox.showwarning("Fim da Extração", "Nenhum frame significativo foi encontrado com as configurações atuais."))
+                self.after(0, lambda: self.btn_start_vid.configure(state="normal"))
+                
+        except Exception as e:
+            self.after(0, lambda err=str(e): messagebox.showerror("Erro no Extrator", f"Erro fatal: {err}"))
+            self.after(0, lambda: self.btn_start_vid.configure(state="normal"))
+
+    def _update_ui_vid(self, msg, current, total):
+        self._write_log(self.log_vid, msg)
+        if total > 0:
+            self.progress_vid.set(current / total)
+
+    def _open_reviewer(self, frames):
+        # Open the review window
+        reviewer = FrameReviewer(self, frames, on_finish_callback=self._on_review_finished)
+        
+    def _on_review_finished(self, accepted_frames):
+        if not accepted_frames:
+            self._write_log(self.log_vid, "⚠️ Revisão concluída sem nenhum frame aceito.")
+            self.btn_start_vid.configure(state="normal")
+            return
+            
+        self._write_log(self.log_vid, f"✅ {len(accepted_frames)} frames aceitos. Gerando PDF...")
+        
+        # Build PDF thread
+        threading.Thread(target=self._build_final_pdf, args=(accepted_frames,), daemon=True).start()
+
+    def _build_final_pdf(self, accepted_frames):
+        try:
+            pdf_path = pdf_builder.build_pdf_from_frames(accepted_frames)
+            self.pdf_path = pdf_path
+            
+            self._write_log(self.log_vid, f"🎉 PDF Gerado com sucesso: {os.path.basename(pdf_path)}")
+            self.after(0, lambda: messagebox.showinfo("Sucesso", f"PDF gerado com sucesso em:\n{pdf_path}\n\nAgora você pode ir na aba 'Extrator' para fazer o OCR!"))
+            
+            # Sync with Phase 1
+            self.after(0, lambda: self.lbl_file.configure(text=f"PDF (via Vídeo): {os.path.basename(pdf_path)}"))
+            
+            try: os.startfile(os.path.dirname(pdf_path))
+            except: pass
+            
+        except Exception as e:
+            self.after(0, lambda err=str(e): messagebox.showerror("Erro ao Gerar PDF", f"Falha na montagem: {err}"))
+            
+        self.after(0, lambda: self.btn_start_vid.configure(state="normal"))
+        # cleanup
+        # pdf_builder.cleanup_temp_frames() # Optional
 
     # ==========================================
     # ABA: UNIFICADOR JSON
