@@ -16,6 +16,7 @@ class FrameReviewer(ctk.CTkToplevel):
         self.frame_paths = frame_paths
         self.on_finish_callback = on_finish_callback
         self.accepted_frames = []
+        self.history = []  # List of booleans (True=accepted, False=rejected)
         self.current_idx = 0
         
         self._setup_ui()
@@ -30,7 +31,7 @@ class FrameReviewer(ctk.CTkToplevel):
         self.lbl_progress = ctk.CTkLabel(self.info_panel, text="Revisando 0/0", font=ctk.CTkFont(size=16, weight="bold"))
         self.lbl_progress.pack(pady=5)
         
-        self.lbl_instr = ctk.CTkLabel(self.info_panel, text="Seta ESQUERDA: Rejeitar | Seta DIREITA: Aceitar", text_color="gray70")
+        self.lbl_instr = ctk.CTkLabel(self.info_panel, text="← Rejeitar | Aceitar → | Backspace: Voltar", text_color="gray70")
         self.lbl_instr.pack()
         
         # Image Display
@@ -46,11 +47,15 @@ class FrameReviewer(ctk.CTkToplevel):
         
         self.btn_reject = ctk.CTkButton(self.ctrl_panel, text="❌ Rejeitar (←)", fg_color="#c0392b", hover_color="#96281b", 
                                        width=150, height=40, command=self._reject)
-        self.btn_reject.pack(side="left", padx=20, pady=10)
+        self.btn_reject.pack(side="left", padx=10, pady=10)
         
         self.btn_accept = ctk.CTkButton(self.ctrl_panel, text="✅ Aceitar (→) →", fg_color="#27ae60", hover_color="#1e8449",
                                        width=150, height=40, command=self._accept)
-        self.btn_accept.pack(side="left", padx=20, pady=10)
+        self.btn_accept.pack(side="left", padx=10, pady=10)
+
+        self.btn_undo = ctk.CTkButton(self.ctrl_panel, text="↩️ Voltar (Bkspc)", fg_color="transparent", border_width=1,
+                                     width=120, height=40, command=self._undo)
+        self.btn_undo.pack(side="left", padx=20, pady=10)
         
         self.btn_all = ctk.CTkButton(self.ctrl_panel, text="🚀 Aceitar Todos Restantes", fg_color="#2980b9", hover_color="#1c5980",
                                     width=200, height=40, command=self._accept_all)
@@ -59,6 +64,7 @@ class FrameReviewer(ctk.CTkToplevel):
     def _bind_keys(self):
         self.bind("<Left>", lambda e: self._reject())
         self.bind("<Right>", lambda e: self._accept())
+        self.bind("<BackSpace>", lambda e: self._undo())
         
     def _show_current_frame(self):
         if self.current_idx >= len(self.frame_paths):
@@ -87,11 +93,21 @@ class FrameReviewer(ctk.CTkToplevel):
             
     def _accept(self):
         self.accepted_frames.append(self.frame_paths[self.current_idx])
+        self.history.append(True)
         self._next()
         
     def _reject(self):
-        # Just skip
+        self.history.append(False)
         self._next()
+
+    def _undo(self):
+        if self.current_idx > 0 and self.history:
+            self.current_idx -= 1
+            last_decision = self.history.pop()
+            if last_decision:  # if it was accepted
+                if self.accepted_frames:
+                    self.accepted_frames.pop()
+            self._show_current_frame()
         
     def _next(self):
         self.current_idx += 1
