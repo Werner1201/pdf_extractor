@@ -11,10 +11,30 @@ import re
 # LIMPEZA E CORREÇÕES CLÁSSICAS DE OCR
 # =========================================================
 def limpar_texto(texto):
-    """Remove espaços extras e linhas em branco, além de correções OCR comuns."""
+    """Remove espaços extras, linhas em branco e lixo de UI do FocusOnForce."""
     texto = texto.replace("\r", "\n")
-    texto = re.sub(r"[ \t]+", " ", texto) # remove multi-espaços
-    texto = re.sub(r"\n{3,}", "\n\n", texto) # limita linhas em branco
+    
+    # Remove marcadores de paginação do OCR interno
+    texto = re.sub(r"--- PAGINA \d+ ---", "", texto)
+    
+    # Lista de ruídos conhecidos do FocusOnForce/Navegador
+    ruidos = [
+        r"focusonforce\.com/.*",
+        r"Todos os favoritos",
+        r"Certifications Courses About Salesforce.*",
+        r"A K2 Partnering Solutions Company.*",
+        r"v Si Boe Ba.*",
+        r"Agent force Zero to.*",
+        r"Al Use Cases with S.*",
+        r"focusonforce\.com",
+        r"K2 Partnering Solutions",
+        r"Choose \d+ answer", # will use as separator later, clean up from raw lines
+    ]
+    for r in ruidos:
+        texto = re.sub(r"(?im)^.*" + r + r".*$", "", texto)
+
+    texto = re.sub(r"[ \t]+", " ", texto)
+    texto = re.sub(r"\n{3,}", "\n\n", texto)
     return texto.strip()
 
 
@@ -23,35 +43,48 @@ def limpar_texto(texto):
 # =========================================================
 def separar_questoes(texto):
     """
-    Identifica o início de cada questão de acordo com o padrão do PDF.
-    Padrão: Question X of \d+
+    Identifica o início de cada questão suportando múltiplos padrões.
+    Lida com duplicatas de vídeo escolhendo o maior bloco por ID.
     """
-    pattern = re.compile(r"(?im)^(?:Question\s+(\d+)\s+of\s+\d+).*?$")
+    # Padrões de início de questão (PDF, Web 1. , Web 1) )
+    patterns = [
+        re.compile(r"(?im)^(?:Question\s+(\d+)\s+of\s+\d+).*?$"),
+        re.compile(r"(?im)^(\d+)\.\s+[A-Z].*$"),
+        re.compile(r"(?im)^(\d+)\)\s+[A-Z].*$")
+    ]
 
-    matches = list(pattern.finditer(texto))
-    if not matches:
-        # Fallback caso a palavra Question esteja errada
-        pattern = re.compile(r"(?im)^(?:\w{6,9}\s+(\d+)\s+of\s+\d+).*?$")
-        matches = list(pattern.finditer(texto))
-        if not matches:
-            print("⚠️  Nenhuma questão numerada padrão encontrada!")
-            return []
+    all_matches = []
+    for p in patterns:
+        all_matches.extend(list(p.finditer(texto)))
+    
+    # Ordena matches por posição no texto
+    all_matches.sort(key=lambda x: x.start())
 
-    questoes = []
-    for idx, match in enumerate(matches):
+    if not all_matches:
+        print("⚠️  Nenhuma questão numerada padrão encontrada!")
+        return []
+
+    temp_questoes = []
+    for idx, match in enumerate(all_matches):
         inicio = match.start()
-        fim = matches[idx + 1].start() if idx + 1 < len(matches) else len(texto)
-
+        fim = all_matches[idx + 1].start() if idx + 1 < len(all_matches) else len(texto)
         bloco = texto[inicio:fim].strip()
         numero = match.group(1)
-
-        questoes.append({
+        temp_questoes.append({
             "numero": int(numero),
             "bloco": bloco
         })
 
-    print(f"📝 {len(questoes)} questões encontradas no bloco base.")
-    return questoes
+    # Deduplicação (comum em vídeos): mantém o maior bloco para cada número
+    questoes_dict = {}
+    for q in temp_questoes:
+        num = q["numero"]
+        if num not in questoes_dict or len(q["bloco"]) > len(questoes_dict[num]["bloco"]):
+            questoes_dict[num] = q
+
+    v_final = sorted(questoes_dict.values(), key=lambda x: x["numero"])
+    print(f"📝 {len(v_final)} questões únicas encontradas no processamento avançado.")
+    return v_final
 
 
 # =========================================================
@@ -72,41 +105,48 @@ def mepear_letra(ocr_char):
 # =========================================================
 def extrair_alternativas_e_resposta(bloco):
     """
-    Encontra alternativas garantindo flexibilidade pra erros e
-    identifica a resposta correta baseado no prefixo (@ ou ®).
+    Encontra alternativas suportando formato A. B. C. ou sequencial livre.
     """
-    # Procura o inicio de linhas como "O A. ", "® 6. ", "@ ¢, "
-    # Grupo 1: Prefixo (onde pode ter o ® ou @) - até 5 chars
-    # Grupo 2: A Letra suja (A, B, 6, C, ¢, etc)
-    pat_alternativa = re.compile(r"(?im)^(.{0,5}?)([A-E68¢€2])[\.\,\)]\s+")
-    
+    pat_alternativa = re.compile(r"(?im)^(.{0,4}?)([A-E68¢€2])[\.\,\)]\s+")
     alt_starts = list(pat_alternativa.finditer(bloco))
+    
     alternativas = {}
     resposta_correta = None
 
-    for i, m in enumerate(alt_starts):
-        prefixo = m.group(1)
-        letra_suja = m.group(2)
-        letra_limpa = mepear_letra(letra_suja)
-        
-        inicio_texto = m.end()
-
-        # Verifica se o prefixo contém marcador de resposta certa do PDF
-        if "®" in prefixo or "@" in prefixo:
-            resposta_correta = letra_limpa
-
-        # O texto vai até a próxima alternativa, ou fim do bloco
-        if i + 1 < len(alt_starts):
-            fim_texto = alt_starts[i + 1].start()
-        else:
-            fim_texto = len(bloco)
-
-        texto_alt = bloco[inicio_texto:fim_texto].strip()
-        texto_alt = re.sub(r"\s+", " ", texto_alt)
-        
-        # Pode ocorrer do OCR duplicar uma mesma letra se falhar feio
-        if letra_limpa not in alternativas:
-            alternativas[letra_limpa] = texto_alt
+    if alt_starts:
+        for i, m in enumerate(alt_starts):
+            prefixo = m.group(1)
+            letra_suja = m.group(2)
+            letra_limpa = mepear_letra(letra_suja)
+            inicio_texto = m.end()
+            if "®" in prefixo or "@" in prefixo:
+                resposta_correta = letra_limpa
+            fim_texto = alt_starts[i + 1].start() if i + 1 < len(alt_starts) else len(bloco)
+            texto_alt = bloco[inicio_texto:fim_texto].strip()
+            texto_alt = re.sub(r"\s+", " ", texto_alt)
+            if letra_limpa not in alternativas:
+                alternativas[letra_limpa] = texto_alt
+    else:
+        # Formato livre (sem letras explícitas - comum em web OCR)
+        # Tenta identificar por quebras de linha após frases de comando
+        pivot = re.search(r"(?im)Choose\s+\d+\s+answer\.?", bloco)
+        if pivot:
+            lines = bloco[pivot.end():].split("\n")
+            lines = [l.strip() for l in lines if l.strip()]
+            
+            for idx, line in enumerate(lines):
+                if len(alternativas) >= 5 or idx > 10: break
+                # Se for uma linha indicadora de correção
+                if re.search(r"(?i)^[~+]*orrect", line) or re.search(r"(?i)^correct", line):
+                    if alternativas:
+                        last_letter = chr(64 + len(alternativas))
+                        resposta_correta = last_letter
+                    continue
+                # Se for texto de explicação longo, para
+                if len(line) > 200 and idx > 2: break
+                
+                letter = chr(65 + len(alternativas))
+                alternativas[letter] = line
 
     return alternativas, resposta_correta
 
