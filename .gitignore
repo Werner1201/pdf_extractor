@@ -7,6 +7,7 @@ venv/
 # Proteção de Configurações e Chaves Seguras
 .env
 settings.json
+session_state.md
 
 # Proteção de Saídas (Evitar commitar textos de OCR)
 output/
