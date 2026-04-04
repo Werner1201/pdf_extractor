@@ -2,6 +2,7 @@ import os
 import json
 import threading
 import subprocess
+import shutil
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
 
@@ -26,6 +27,7 @@ class App(ctk.CTk):
         self.minsize(1000, 700)
         
         self.pdf_path = ""
+        self.folder_path = ""
         self.txt_path = config.OUTPUT_TXT if os.path.exists(config.OUTPUT_TXT) else ""
         self.json_path = config.OUTPUT_JSON if os.path.exists(config.OUTPUT_JSON) else ""
         
@@ -91,10 +93,17 @@ class App(ctk.CTk):
         self.lbl_f1_title = ctk.CTkLabel(self.frame_fase1, text="Fase 1: OCR -> Arquivo TXT", font=ctk.CTkFont(weight="bold", size=16))
         self.lbl_f1_title.pack(pady=10)
         
-        self.lbl_file = ctk.CTkLabel(self.frame_fase1, text="Nenhum PDF selecionado.", wraplength=400)
+        self.lbl_file = ctk.CTkLabel(self.frame_fase1, text="Nenhum PDF/Pasta selecionado.", wraplength=400)
         self.lbl_file.pack(pady=10)
-        self.btn_select_file = ctk.CTkButton(self.frame_fase1, text="Procurar PDF", command=self.select_pdf)
-        self.btn_select_file.pack(pady=5)
+        
+        self.frame_f1_src = ctk.CTkFrame(self.frame_fase1, fg_color="transparent")
+        self.frame_f1_src.pack(pady=5)
+        
+        self.btn_select_file = ctk.CTkButton(self.frame_f1_src, text="📄 Procurar PDF", width=140, command=self.select_pdf)
+        self.btn_select_file.grid(row=0, column=0, padx=5)
+        
+        self.btn_select_folder = ctk.CTkButton(self.frame_f1_src, text="📁 Procurar Pasta", width=140, command=self.select_folder)
+        self.btn_select_folder.grid(row=0, column=1, padx=5)
         
         self.btn_start_ocr = ctk.CTkButton(self.frame_fase1, text="GERAR TXT (OCR)", height=40, fg_color="#ff9900", hover_color="#cc7a00", command=self.start_fase1)
         self.btn_start_ocr.pack(pady=10)
@@ -193,8 +202,19 @@ class App(ctk.CTk):
         path = filedialog.askopenfilename(filetypes=[("PDF Files", "*.pdf")])
         if path:
             self.pdf_path = path
+            self.folder_path = ""
             self.lbl_file.configure(text=f"PDF: {os.path.basename(path)}")
             
+    def select_folder(self):
+        path = filedialog.askdirectory()
+        if path:
+            self.folder_path = path
+            self.pdf_path = ""
+            # count images
+            exts = (".png", ".jpg", ".jpeg", ".bmp", ".tiff")
+            count = len([f for f in os.listdir(path) if f.lower().endswith(exts)])
+            self.lbl_file.configure(text=f"Pasta: {os.path.basename(path)} ({count} imagens)")
+
     def select_txt(self):
         path = filedialog.askopenfilename(filetypes=[("Text Files", "*.txt")])
         if path:
@@ -217,8 +237,8 @@ class App(ctk.CTk):
             self.progress_ocr.set(current / total)
 
     def start_fase1(self):
-        if not self.pdf_path:
-            messagebox.showwarning("Aviso", "Selecione o PDF para o OCR!")
+        if not self.pdf_path and not self.folder_path:
+            messagebox.showwarning("Aviso", "Selecione um PDF ou uma Pasta de Imagens para o OCR!")
             return
             
         self.save_configs()
@@ -234,7 +254,13 @@ class App(ctk.CTk):
     def _run_fase1(self):
         os.makedirs(config.OUTPUT_DIR, exist_ok=True)
         try:
-            texto_bruto = extrair_texto_do_pdf(self.pdf_path, self.progress_callback_ocr)
+            from ocr import extrair_texto_do_pdf, extrair_texto_de_pasta
+            
+            if self.pdf_path:
+                texto_bruto = extrair_texto_do_pdf(self.pdf_path, self.progress_callback_ocr)
+            else:
+                texto_bruto = extrair_texto_de_pasta(self.folder_path, self.progress_callback_ocr)
+            
             txt_dest = config.OUTPUT_TXT
             with open(txt_dest, "w", encoding="utf-8") as f:
                 f.write(texto_bruto)
@@ -502,6 +528,12 @@ class App(ctk.CTk):
                                           command=self.start_video_extraction)
         self.btn_start_vid.pack(pady=15, padx=20, fill="x")
         
+        # New: Export PDF button
+        self.btn_export_pdf = ctk.CTkButton(parent, text="📄 Exportar Frames como PDF (Opcional)", 
+                                           fg_color="transparent", border_width=1, state="disabled", font=ctk.CTkFont(slant="italic"),
+                                           command=self._export_video_pdf)
+        self.btn_export_pdf.pack(pady=(0, 10), padx=20, fill="x")
+        
         self.progress_vid = ctk.CTkProgressBar(parent)
         self.progress_vid.pack(padx=20, pady=5, fill="x")
         self.progress_vid.set(0)
@@ -565,10 +597,49 @@ class App(ctk.CTk):
             self.btn_start_vid.configure(state="normal")
             return
             
-        self._write_log(self.log_vid, f"✅ {len(accepted_frames)} frames aceitos. Gerando PDF...")
+        self._write_log(self.log_vid, f"✅ {len(accepted_frames)} frames aceitos.")
         
-        # Build PDF thread
-        threading.Thread(target=self._build_final_pdf, args=(accepted_frames,), daemon=True).start()
+        # Save frames to the "frames_aceitos" folder
+        try:
+            if not os.path.exists(config.VIDEO_ACCEPTED_DIR):
+                os.makedirs(config.VIDEO_ACCEPTED_DIR)
+            else:
+                # Clean before new extraction
+                for f in os.listdir(config.VIDEO_ACCEPTED_DIR):
+                    os.remove(os.path.join(config.VIDEO_ACCEPTED_DIR, f))
+            
+            for i, frame_path in enumerate(accepted_frames, start=1):
+                dest = os.path.join(config.VIDEO_ACCEPTED_DIR, f"frame_{i:03d}.png")
+                shutil.copy2(frame_path, dest)
+            
+            self._write_log(self.log_vid, f"💾 Frames salvos em: {config.VIDEO_ACCEPTED_DIR}")
+            self.after(0, lambda: messagebox.showinfo("Pronto para OCR", f"{len(accepted_frames)} frames foram salvos. Vá na aba 'Extrator' para processá-los!"))
+            
+            # Sync with Phase 1 (FOLDER mode)
+            self.folder_path = config.VIDEO_ACCEPTED_DIR
+            self.pdf_path = ""
+            self.after(0, lambda: self.lbl_file.configure(text=f"Pasta (via Vídeo): {os.path.basename(self.folder_path)} ({len(accepted_frames)} imagens)"))
+            self.after(0, lambda: self.btn_export_pdf.configure(state="normal"))
+            
+            # Switch to Extrator tab automatically? (optional)
+            # self.tabview.set("🗂️ Extrator")
+            
+        except Exception as e:
+            messagebox.showerror("Erro ao salvar frames", str(e))
+        
+        self.btn_start_vid.configure(state="normal")
+
+    def _export_video_pdf(self):
+        # Allow building PDF from the accepted folder
+        if not self.folder_path or not os.path.exists(self.folder_path):
+            return
+            
+        # Get listed files
+        files = sorted([os.path.join(self.folder_path, f) for f in os.listdir(self.folder_path) if f.lower().endswith((".png", ".jpg"))])
+        if not files: return
+        
+        self.btn_export_pdf.configure(state="disabled")
+        threading.Thread(target=self._build_final_pdf, args=(files,), daemon=True).start()
 
     def _build_final_pdf(self, accepted_frames):
         try:

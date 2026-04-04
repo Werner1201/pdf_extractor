@@ -8,6 +8,8 @@ Módulo responsável por:
 
 import cv2
 import numpy as np
+import os
+from PIL import Image
 import pytesseract
 from pdf2image import convert_from_path
 
@@ -94,5 +96,52 @@ def extrair_texto_do_pdf(pdf_path=None, progress_callback=None):
         progress_callback(f"✅ OCR concluído! {total} páginas processadas.", total, total)
     else:
         print(f"✅ OCR concluído! {total} páginas processadas.")
+
+    return resultado
+
+
+def extrair_texto_de_pasta(folder_path, progress_callback=None):
+    """
+    Lista imagens na pasta, ordena e extrai texto de cada uma via Tesseract.
+    """
+    if config.TESSERACT_CMD:
+        pytesseract.pytesseract.tesseract_cmd = config.TESSERACT_CMD
+
+    # Supported extensions
+    valid_extensions = (".png", ".jpg", ".jpeg", ".bmp", ".tiff")
+    arquivos = sorted([
+        f for f in os.listdir(folder_path) 
+        if f.lower().endswith(valid_extensions)
+    ])
+
+    if not arquivos:
+        raise Exception(f"Nenhuma imagem válida encontrada em: {folder_path}")
+
+    total = len(arquivos)
+    texto_completo = []
+
+    for i, arquivo in enumerate(arquivos, start=1):
+        if progress_callback:
+            progress_callback(f"🔍 OCR imagem {i} de {total} ({arquivo})...", i, total)
+        
+        path = os.path.join(folder_path, arquivo)
+        try:
+            img = Image.open(path)
+            # Mesma configuração e delimitador para compatibilidade
+            texto = pytesseract.image_to_string(
+                img,
+                lang=config.TESSERACT_LANG,
+                config="--oem 3 --psm 6"
+            )
+            texto_completo.append(f"\n--- PAGINA {i} ---\n{texto}")
+        except Exception as e:
+            if progress_callback:
+                progress_callback(f"ERRO OCR EM {arquivo}: {e}", i, total)
+            continue
+
+    resultado = "\n".join(texto_completo)
+    
+    if progress_callback:
+        progress_callback(f"✅ OCR da pasta concluído! {total} imagens extraídas.", total, total)
 
     return resultado
