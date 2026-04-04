@@ -179,7 +179,7 @@ class App(ctk.CTk):
 
         self.textbox_prompt = ctk.CTkTextbox(self.f3_manual, height=80, font=("Consolas", 11))
         # Nao exibe de imediato
-        self.textbox_prompt.insert("1.0", PROMPT_MANUAL.strip())
+        self.textbox_prompt.insert("1.0", "[AVISO PARA VOCÊ: Antes de colar a lista inteira, separe seu JSON em blocos de no mínimo 10 questões. Se você colar todas as 65 de uma vez, sites como ChatGPT ou Claude vão cortar a resposta no meio e estragar a formatação do código!]\n" + PROMPT_MANUAL.strip())
         self.textbox_prompt.configure(state="disabled")
         
         self.btn_copy_prompt = ctk.CTkButton(self.f3_manual, text="Copiar Prompt", width=100, command=self.copy_prompt)

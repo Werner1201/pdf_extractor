@@ -3,8 +3,6 @@ import config
 import config
 
 PROMPT_MANUAL = """
-[AVISO PARA VOCÊ: Antes de colar a lista inteira, separe seu JSON em blocos de no mínimo 10 questões. Se você colar todas as 65 de uma vez, sites como ChatGPT ou Claude vão cortar a resposta no meio e estragar a formatação do código!]
-
 Você atua como um assistente de estruturação de dados de certificação (Salesforce). Abaixo enviarei um array de objetos JSON contendo questões de múltipla escolha geradas por um OCR com pequenos typos e lacunas.
 Sua tarefa é retornar APENAS UM NOVO JSON VÁLIDO contendo os itens enviados, sob as seguintes regras:
 1. Corrija minúcias de OCR e erros ortográficos nas propriedades `question` e `options`.
