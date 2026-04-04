@@ -1,0 +1,9 @@
+customtkinter
+Pillow
+opencv-python
+numpy
+pytesseract
+pdf2image
+google-genai
+python-dotenv
+pyinstaller

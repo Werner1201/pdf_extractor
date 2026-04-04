@@ -1,0 +1,12 @@
+# Proteção Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# Proteção de Configurações e Chaves Seguras
+.env
+settings.json
+
+# Proteção de Saídas (Evitar commitar textos de OCR)
+output/
