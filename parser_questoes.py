@@ -155,18 +155,22 @@ def extrair_alternativas_e_resposta(bloco):
 # EXTRAIR PERGUNTA
 # =========================================================
 def extrair_pergunta(bloco):
-    """A pergunta é tudo antes da primeira alternativa."""
-    first_alt = re.search(r"(?im)^.{0,5}?[A-E68¢€2][\.\,\)]\s+", bloco)
+    """A pergunta é tudo antes da primeira alternativa ou comando de escolha."""
+    # Tenta achar letra (A. B. C.)
+    first_alt = re.search(r"(?im)^.{0,4}?[A-E68¢€2][\.\,\)]\s+", bloco)
+    
+    # Tenta achar o comando de escolha (Choose 1 answer)
+    pivot = re.search(r"(?im)Choose\s+\d+\s+answer\.?", bloco)
 
     if first_alt:
         pergunta = bloco[:first_alt.start()].strip()
+    elif pivot:
+        pergunta = bloco[:pivot.start()].strip()
     else:
         pergunta = bloco.strip()
 
     # Remove o header "Question X of Y" ou lixo do topo
     pergunta = re.sub(r"(?im)^\w{6,9}\s+\d+\s+of\s+\d+.*?[\n\r]", "", pergunta)
-    # Remove "| Choose 1 option. |"
-    pergunta = re.sub(r"(?im)^.*Choose\s+\d+\s+option.*$", "", pergunta)
     
     pergunta = re.sub(r"\s+", " ", pergunta).strip()
 

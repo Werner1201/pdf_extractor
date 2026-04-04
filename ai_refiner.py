@@ -3,14 +3,34 @@ import config
 import config
 
 PROMPT_MANUAL = """
-Você atua como um assistente de estruturação de dados de certificação (Salesforce). Abaixo enviarei um array de objetos JSON contendo questões de múltipla escolha geradas por um OCR com pequenos typos e lacunas.
-Sua tarefa é retornar APENAS UM NOVO JSON VÁLIDO contendo os itens enviados, sob as seguintes regras:
-1. Corrija minúcias de OCR e erros ortográficos nas propriedades `question` e `options`.
-2. Pense e preencha a propriedade `explanation` com uma justificativa de tamanho aceitável mas conciso do porquê o gabarito (correct_answer) é a resposta correta baseado no contexto da pergunta.
-3. Preencha `topic` com o assunto principal abordado nas alternativas.
-4. Preencha `difficulty` como "Easy", "Medium" ou "Hard".
+Você é um Especialista em Certificações Salesforce e Arquiteto de Dados.
+Sua missão é REESTRUTURAR, LIMPAR e REFINAR um array de objetos JSON que veio de um OCR de vídeo (scrolling).
+O texto está "sujo", com repetições e informações deslocadas entre os campos devido ao movimento da tela.
 
-Me retorne apenas o Array de JSON puro e válido. NENHUM texto introdutório.
+### REGRAS DE REFINAMENTO OBRIGATÓRIAS:
+1. **Extração de Dados Ocultos**:
+   - Muitas vezes o campo `question` contém as alternativas e até a resposta. Identifique-as!
+   - Se encontrar alternativas (A, B, C...) dentro da `question`, mova-as para o array `options`.
+   - Limpe o campo `question` para conter apenas o enunciado da pergunta.
+
+2. **Identificação do Gabarito (`correct_answer`)**:
+   - O OCR captura marcadores de resposta como "~Orrect", "Correct", "Incorrect", "®", "@".
+   - Use esses marcadores para definir a letra correta (A, B, C, D ou E) no campo `correct_answer`.
+   - Se o texto disser "Incorrect" para uma opção, use lógica para achar a correta.
+
+3. **Remoção de Duplicidades (Efeito Scroll)**:
+   - Remova parágrafos ou frases que se repetem dentro do mesmo campo (artefato comum do scroll de vídeo).
+   - Una fragmentos de frases que foram quebrados entre páginas.
+
+4. **Enriquecimento Técnico**:
+   - `explanation`: Escreva uma justificativa técnica concisa e correta sobre por que aquela alternativa é a certa (baseado no contexto Salesforce).
+   - `topic`: Identifique o tópico da certificação (Ex: Prompt Engineering, AI Models, Trust Layer).
+   - `difficulty`: Defina como "Easy", "Medium" ou "Hard".
+   - `options`: Formate cada item como "A. Texto", "B. Texto", etc.
+
+5. **Saída**:
+   - Retorne APENAS o Array de JSON puro e válido. NENHUM texto introdutório ou explicativo fora do JSON.
+   - Mantenha os IDs originais.
 """
 
 def refinar_questoes_por_ia(path_json_origem, api_key, progress_callback, countdown_callback=None):
