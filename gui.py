@@ -16,6 +16,11 @@ import video_extractor
 import pdf_builder
 from frame_reviewer import FrameReviewer
 
+# Stitching Imports
+import roi_selector
+import scroll_stitcher
+from stitch_reviewer import StitchReviewer
+
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
 
@@ -521,7 +526,28 @@ class App(ctk.CTk):
 
         self.frame_vid_cfg.grid_columnconfigure(0, weight=1)
         self.frame_vid_cfg.grid_columnconfigure(2, weight=1)
+
+        # --- Mode Selector ---
+        ctk.CTkLabel(parent, text="Modo de Captura:", font=ctk.CTkFont(weight="bold")).pack(pady=(10, 0))
+        self.mode_var = ctk.StringVar(value="Frames Individuais")
+        self.mode_selector = ctk.CTkSegmentedButton(parent, values=["Frames Individuais", "Stitching de Scroll"], 
+                                                     variable=self.mode_var, command=self._on_mode_change)
+        self.mode_selector.pack(pady=5, padx=20, fill="x")
+
+        # Stitching Specific Settings (Hidden by default)
+        self.frame_stitch_cfg = ctk.CTkFrame(parent)
+        # We don't pack it yet
         
+        ctk.CTkLabel(self.frame_stitch_cfg, text="Sobreposição Mínima (Correlação):", font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, padx=10, pady=(10,0), sticky="w")
+        self.slider_corr = ctk.CTkSlider(self.frame_stitch_cfg, from_=0.50, to=0.95, number_of_steps=45)
+        self.slider_corr.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
+        self.slider_corr.set(config.STITCH_MIN_CORRELATION)
+        
+        self.lbl_corr_val = ctk.CTkLabel(self.frame_stitch_cfg, text=f"{config.STITCH_MIN_CORRELATION:.2f}")
+        self.lbl_corr_val.grid(row=1, column=1, padx=10, pady=5)
+        self.slider_corr.configure(command=lambda v: self.lbl_corr_val.configure(text=f"{v:.2f}"))
+        self.frame_stitch_cfg.grid_columnconfigure(0, weight=1)
+
         # --- Extraction Button ---
         self.btn_start_vid = ctk.CTkButton(parent, text="▶️ INICIAR EXTRAÇÃO DE FRAMES", height=50, 
                                           fg_color="#3498db", hover_color="#2980b9", font=ctk.CTkFont(size=14, weight="bold"),
@@ -562,25 +588,106 @@ class App(ctk.CTk):
         
         threading.Thread(target=self._run_video_extraction, daemon=True).start()
 
+    def _on_mode_change(self, mode):
+        if mode == "Stitching de Scroll":
+            self.frame_stitch_cfg.pack(padx=20, pady=10, fill="x", before=self.btn_start_vid)
+            self.slider_ssim.set(0.75) # Suggest lower threshold for stitching
+            self.lbl_ssim_val.configure(text="0.75")
+        else:
+            self.frame_stitch_cfg.pack_forget()
+            self.slider_ssim.set(config.DEFAULT_SSIM_THRESHOLD)
+            self.lbl_ssim_val.configure(text=f"{config.DEFAULT_SSIM_THRESHOLD:.2f}")
+
     def _run_video_extraction(self):
         try:
             threshold = self.slider_ssim.get()
             interval = self.slider_interval.get()
+            mode = self.mode_var.get()
             
             def progress_cb(msg, cur, tot):
                 self.after(0, lambda: self._update_ui_vid(msg, cur, tot))
 
+            self._write_log(self.log_vid, f"Iniciando captura em modo: {mode}")
             frames = video_extractor.extract_frames(self.video_path, threshold=threshold, interval=interval, progress_callback=progress_cb)
             
-            if frames:
+            if not frames:
+                self.after(0, lambda: messagebox.showwarning("Fim da Extração", "Nenhum frame significativo foi encontrado."))
+                self.after(0, lambda: self.btn_start_vid.configure(state="normal"))
+                return
+
+            if mode == "Frames Individuais":
                 self.after(0, lambda: self._open_reviewer(frames))
             else:
-                self.after(0, lambda: messagebox.showwarning("Fim da Extração", "Nenhum frame significativo foi encontrado com as configurações atuais."))
-                self.after(0, lambda: self.btn_start_vid.configure(state="normal"))
+                # Stitching Workflow
+                self.after(0, lambda: self._run_stitching_workflow(frames))
                 
         except Exception as e:
             self.after(0, lambda err=str(e): messagebox.showerror("Erro no Extrator", f"Erro fatal: {err}"))
             self.after(0, lambda: self.btn_start_vid.configure(state="normal"))
+
+    def _run_stitching_workflow(self, frames):
+        try:
+            # 1. Open ROI Selector with first frame
+            import cv2
+            first_frame = cv2.imread(frames[0])
+            roi = roi_selector.get_roi_selection(self, first_frame)
+            
+            if not roi:
+                self._write_log(self.log_vid, "❌ Stitching cancelado (ROI não selecionada).")
+                self.btn_start_vid.configure(state="normal")
+                return
+            
+            self._write_log(self.log_vid, f"✅ ROI selecionada: {roi}. Iniciando costura...")
+            
+            def stitch_worker():
+                try:
+                    corr_thresh = self.slider_corr.get()
+                    
+                    def stitch_cb(msg, cur, tot):
+                        self.after(0, lambda: self._update_ui_vid(msg, cur, tot))
+                    
+                    # 2. Stitch
+                    stitched_imgs = scroll_stitcher.stitch_frames(frames, roi=roi, min_correlation=corr_thresh, progress_callback=stitch_cb)
+                    
+                    if not stitched_imgs:
+                        self.after(0, lambda: messagebox.showerror("Erro no Stitching", "Não foi possível costurar os frames. Tente diminuir a sensibilidade ou mudar a ROI."))
+                        return
+                    
+                    # 3. Slice
+                    self.after(0, lambda: self._write_log(self.log_vid, "✂️ Fatiando imagem em páginas A4..."))
+                    temp_paths = scroll_stitcher.slice_to_a4(stitched_imgs, config.VIDEO_TEMP_DIR)
+                    
+                    # 4. Open Reviewer
+                    self.after(0, lambda: self._open_stitch_reviewer(stitched_imgs, temp_paths))
+                    
+                except Exception as e:
+                    self.after(0, lambda err=str(e): messagebox.showerror("Erro no Processo", err))
+                finally:
+                    self.after(0, lambda: self.btn_start_vid.configure(state="normal"))
+
+            threading.Thread(target=stitch_worker, daemon=True).start()
+            
+        except Exception as e:
+            messagebox.showerror("Erro Iniciando Stitching", str(e))
+            self.btn_start_vid.configure(state="normal")
+
+    def _open_stitch_reviewer(self, stitched_imgs, temp_paths):
+        # We don't have actual slice points here easily, so we pass None
+        reviewer = StitchReviewer(self, stitched_imgs, None, temp_paths, on_finish=self._on_stitch_finished)
+
+    def _on_stitch_finished(self, approved):
+        if approved:
+            self._write_log(self.log_vid, "✅ Stitching aprovado e salvo!")
+            # Sync with Phase 1
+            # Count accepted files
+            files = [f for f in os.listdir(config.VIDEO_ACCEPTED_DIR) if f.startswith("stitch_")]
+            self.folder_path = config.VIDEO_ACCEPTED_DIR
+            self.pdf_path = ""
+            self.after(0, lambda: self.lbl_file.configure(text=f"Pasta (Stitching): {os.path.basename(self.folder_path)} ({len(files)} páginas)"))
+            self.after(0, lambda: self.btn_export_pdf.configure(state="normal"))
+            messagebox.showinfo("Sucesso", f"Stitching concluído! {len(files)} páginas geradas.\nVá para a aba 'Extrator' para processá-las.")
+        else:
+            self._write_log(self.log_vid, "⚠️ Stitching rejeitado pelo usuário.")
 
     def _update_ui_vid(self, msg, current, total):
         self._write_log(self.log_vid, msg)

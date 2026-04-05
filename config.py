@@ -23,6 +23,10 @@ VIDEO_OUTPUT_PDF = os.path.join(OUTPUT_DIR, "video_captura.pdf")
 DEFAULT_SSIM_THRESHOLD = 0.85
 DEFAULT_SAMPLE_INTERVAL = 0.5
 
+# Stitching Settings
+STITCH_MIN_CORRELATION = 0.70
+STITCH_OVERLAP_SEARCH_RATIO = 0.4
+
 # =========================================================
 # OCR
 # =========================================================
