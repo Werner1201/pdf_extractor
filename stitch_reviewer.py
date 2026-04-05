@@ -55,6 +55,16 @@ class StitchReviewer(ctk.CTkToplevel):
         self.btn_reject = ctk.CTkButton(self.footer, text="❌ Rejeitar e Voltar", fg_color="#e74c3c", hover_color="#c0392b", command=self._on_reject)
         self.btn_reject.pack(side="left", padx=10)
         
+        # Navigation Buttons
+        self.nav_frame = ctk.CTkFrame(self.footer, fg_color="transparent")
+        self.nav_frame.pack(side="left", expand=True)
+        
+        self.btn_prev = ctk.CTkButton(self.nav_frame, text="◀ Anterior", width=100, command=self._prev_section)
+        self.btn_prev.pack(side="left", padx=5)
+        
+        self.btn_next = ctk.CTkButton(self.nav_frame, text="Próximo ▶", width=100, command=self._next_section)
+        self.btn_next.pack(side="left", padx=5)
+        
         self.btn_approve = ctk.CTkButton(self.footer, text="✅ Aprovar e Salvar", fg_color="#27ae60", hover_color="#219150", font=ctk.CTkFont(weight="bold"), command=self._on_approve)
         self.btn_approve.pack(side="right", padx=10)
         
@@ -102,6 +112,21 @@ class StitchReviewer(ctk.CTkToplevel):
             curr_y += slice_h
             
         self.canvas.config(scrollregion=(0, 0, display_w, display_h))
+        self.canvas.yview_moveto(0) # Reset scroll pos
+
+        # Update button states
+        self.btn_prev.configure(state="normal" if self.current_idx > 0 else "disabled")
+        self.btn_next.configure(state="normal" if self.current_idx < len(self.stitched_images)-1 else "disabled")
+
+    def _prev_section(self):
+        if self.current_idx > 0:
+            self.current_idx -= 1
+            self._load_current()
+            
+    def _next_section(self):
+        if self.current_idx < len(self.stitched_images) - 1:
+            self.current_idx += 1
+            self._load_current()
 
     def _on_mousewheel(self, event):
         self.canvas.yview_scroll(int(-1*(event.delta/120)), "units")

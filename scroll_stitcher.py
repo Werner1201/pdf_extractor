@@ -3,30 +3,44 @@ import numpy as np
 import os
 import config
 
-def find_vertical_overlap(img_a, img_b, search_ratio=0.5):
+def find_vertical_overlap(img_a, img_b, search_ratio=0.8):
     """
     Finds the vertical offset where img_b overlaps img_a.
-    search_ratio: how much of the image height to use for matching (default 50%).
+    Uses a small template from the top of img_b and searches for it 
+    within a larger area at the bottom of img_a.
     """
     h, w = img_a.shape[:2]
-    search_h = int(h * search_ratio)
     
-    # Template: take the top part of the NEW frame
-    template = img_b[0:search_h, :]
-    # Search area: take the bottom part of the OLD frame
-    search_area = img_a[int(h * (1 - search_ratio)):, :]
+    # 1. Take a small template from the TOP of the NEW frame (e.g., 100 pixels)
+    template_h = min(100, int(h * 0.1))
+    template = img_b[0:template_h, :]
+    
+    # 2. Define the SEARCH AREA in the OLD frame (e.g., the bottom 80%)
+    search_h = int(h * search_ratio)
+    search_area = img_a[h - search_h:, :]
+    
+    # 3. Handle cases where images are too small
+    if search_area.shape[0] <= template.shape[0]:
+        return 0, 0
     
     # Template matching
     res = cv2.matchTemplate(search_area, template, cv2.TM_CCOEFF_NORMED)
     min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
     
-    # max_loc[1] is the Y-offset relative to the start of the search area
-    # The actual offset from top of A to top of B is:
-    # (h - search_h) + max_loc[1]
-    # However, we want to know how much of B is NEW content.
-    # The overlap height is: search_h - max_loc[1]
+    # max_loc[1] is the index where the top of frame B starts inside search_area
+    # The actual overlap height in frame B is relative to its top:
+    # Since the template is at the VERY TOP of B, 
+    # the overlap height is the distance from the top of the search area to the match, 
+    # PLUS the space we skipped in A.
     
-    overlap_h = search_h - max_loc[1]
+    # Offset of search_area top relative to img_a top
+    offset_a = h - search_h
+    # Match position relative to img_a top
+    match_y_a = offset_a + max_loc[1]
+    
+    # The amount of img_b that is OVERLAPPING img_a is (h - match_y_a)
+    overlap_h = h - match_y_a
+    
     return max_val, overlap_h
 
 def stitch_frames(frame_paths, roi=None, min_correlation=0.7, progress_callback=None):
