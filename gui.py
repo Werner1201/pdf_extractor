@@ -653,12 +653,8 @@ class App(ctk.CTk):
                         self.after(0, lambda: messagebox.showerror("Erro no Stitching", "Não foi possível costurar os frames. Tente diminuir a sensibilidade ou mudar a ROI."))
                         return
                     
-                    # 3. Slice
-                    self.after(0, lambda: self._write_log(self.log_vid, "✂️ Fatiando imagem em páginas A4..."))
-                    temp_paths = scroll_stitcher.slice_to_a4(stitched_imgs, config.VIDEO_TEMP_DIR)
-                    
-                    # 4. Open Reviewer
-                    self.after(0, lambda: self._open_stitch_reviewer(stitched_imgs, temp_paths))
+                    # 3. Open Reviewer (Skip slicing)
+                    self.after(0, lambda: self._open_stitch_reviewer(stitched_imgs))
                     
                 except Exception as e:
                     self.after(0, lambda err=str(e): messagebox.showerror("Erro no Processo", err))
@@ -671,21 +667,20 @@ class App(ctk.CTk):
             messagebox.showerror("Erro Iniciando Stitching", str(e))
             self.btn_start_vid.configure(state="normal")
 
-    def _open_stitch_reviewer(self, stitched_imgs, temp_paths):
-        # We don't have actual slice points here easily, so we pass None
-        reviewer = StitchReviewer(self, stitched_imgs, None, temp_paths, on_finish=self._on_stitch_finished)
+    def _open_stitch_reviewer(self, stitched_imgs):
+        reviewer = StitchReviewer(self, stitched_imgs, on_finish=self._on_stitch_finished)
 
     def _on_stitch_finished(self, approved):
         if approved:
             self._write_log(self.log_vid, "✅ Stitching aprovado e salvo!")
             # Sync with Phase 1
             # Count accepted files
-            files = [f for f in os.listdir(config.VIDEO_ACCEPTED_DIR) if f.startswith("stitch_")]
+            files = [f for f in os.listdir(config.VIDEO_ACCEPTED_DIR) if f.startswith("stitched_full_")]
             self.folder_path = config.VIDEO_ACCEPTED_DIR
             self.pdf_path = ""
-            self.after(0, lambda: self.lbl_file.configure(text=f"Pasta (Stitching): {os.path.basename(self.folder_path)} ({len(files)} páginas)"))
+            self.after(0, lambda: self.lbl_file.configure(text=f"Pasta (Stitching): {os.path.basename(self.folder_path)} ({len(files)} imagem longas)"))
             self.after(0, lambda: self.btn_export_pdf.configure(state="normal"))
-            messagebox.showinfo("Sucesso", f"Stitching concluído! {len(files)} páginas geradas.\nVá para a aba 'Extrator' para processá-las.")
+            messagebox.showinfo("Sucesso", f"Stitching concluído! {len(files)} imagem(ns) longa(s) gerada(s).\nVá para a aba 'Extrator' para processá-las.")
         else:
             self._write_log(self.log_vid, "⚠️ Stitching rejeitado pelo usuário.")
 

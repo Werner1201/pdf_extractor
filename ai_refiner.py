@@ -1,6 +1,5 @@
 import json
 import config
-import config
 
 PROMPT_MANUAL = """
 Você é um Especialista em Certificações Salesforce e Arquiteto de Dados.
@@ -93,79 +92,77 @@ def refinar_questoes_por_ia(path_json_origem, api_key, progress_callback, countd
         progress_callback(f"Processando lote {i+1}/{total_lotes} à IA...", i+1, total_lotes+1)
         full_prompt = PROMPT_MANUAL + "\n\n### ARQUIVO JSON DO LOTE:\n" + json.dumps(lote, ensure_ascii=False)
 
-        max_retries = 6
+        max_retries = 3 # Reduzido por modelo, já que vamos rotacionar
         sucesso = False
         ultimo_erro = ""
         
-        for tentativa in range(max_retries):
+        while indice_modelo < len(MODELOS_DISPONIVEIS):
             modelo_atual = MODELOS_DISPONIVEIS[indice_modelo]
-            try:
-                import concurrent.futures
-                
-                # Executa a chamada real dentro de uma thread separada acompanhada de Timeout!
-                def _do_gen():
-                    return client.models.generate_content(
-                        model=modelo_atual,
-                        contents=full_prompt,
-                        config=types.GenerateContentConfig(
-                            response_mime_type="application/json",
-                            temperature=0.2,
-                            top_p=0.95,
-                            top_k=64,
-                            max_output_tokens=8192
-                        ),
-                    )
-                
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    fut = executor.submit(_do_gen)
-                    try:
-                         # Limite arbitrário forte de 60s para prever se a Google congelou
-                         response = fut.result(timeout=60)
-                    except concurrent.futures.TimeoutError:
-                         raise Exception("408 Timeout: O servidor da Google travou ou demorou mais de 60 segundos!")
-                
-                lote_refinado = json.loads(response.text)
-                if isinstance(lote_refinado, list):
-                    resultados_finais.extend(lote_refinado)
+            lote_completado_neste_modelo = False
+            
+            for tentativa in range(max_retries):
+                try:
+                    import concurrent.futures
                     
-                    with open(config.OUTPUT_JSON_REFINED, "w", encoding="utf-8") as file_save:
-                        json.dump(resultados_finais, file_save, ensure_ascii=False, indent=2)
+                    # Executa a chamada real dentro de uma thread separada acompanhada de Timeout!
+                    def _do_gen():
+                        return client.models.generate_content(
+                            model=modelo_atual,
+                            contents=full_prompt,
+                            config=types.GenerateContentConfig(
+                                response_mime_type="application/json",
+                                temperature=0.2,
+                                top_p=0.95,
+                                top_k=64,
+                                max_output_tokens=8192
+                            ),
+                        )
+                    
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                        fut = executor.submit(_do_gen)
+                        try:
+                             # Limite arbitrário forte de 60s para prever se a Google congelou
+                             response = fut.result(timeout=60)
+                        except concurrent.futures.TimeoutError:
+                             raise Exception("408 Timeout: O servidor da Google travou ou demorou mais de 60 segundos!")
+                    
+                    lote_refinado = json.loads(response.text)
+                    if isinstance(lote_refinado, list):
+                        resultados_finais.extend(lote_refinado)
                         
-                    sucesso = True
-                    break
+                        with open(config.OUTPUT_JSON_REFINED, "w", encoding="utf-8") as file_save:
+                            json.dump(resultados_finais, file_save, ensure_ascii=False, indent=2)
+                            
+                        sucesso = True
+                        lote_completado_neste_modelo = True
+                        break
+                    else:
+                        ultimo_erro = "A IA não retornou uma lista JSON."
+                except Exception as e_json:
+                    ultimo_erro = str(e_json).lower()
+                    
+                    # Se for erro de cota ou timeout, ja tentamos pular de modelo se houver proximo
+                    is_quota = '429' in ultimo_erro or 'exhausted' in ultimo_erro or 'quota' in ultimo_erro
+                    is_timeout = '408' in ultimo_erro or 'timeout' in ultimo_erro
+                    is_not_found = '404' in ultimo_erro or 'not found' in ultimo_erro
+                    
+                    if (is_quota or is_timeout or is_not_found) and (indice_modelo < len(MODELOS_DISPONIVEIS) - 1):
+                        progress_callback(f"⚠️ Erro no modelo {modelo_atual}. Rotacionando...", i+1, total_lotes+1)
+                        break # Sai do loop de tentativas deste modelo para ir pro proximo no while
+                    
+                    import time
+                    time.sleep(2) # Espera padrao antes de tentar novamente no mesmo modelo
+            
+            if lote_completado_neste_modelo:
+                break # Sai do while de modelos e vai pro proximo Lote
+            else:
+                # Se terminou as tentativas do modelo atual e nao sucesso, tenta o proximo modelo
+                indice_modelo += 1
+                if indice_modelo < len(MODELOS_DISPONIVEIS):
+                    progress_callback(f"🔄 Tentativas esgotadas no modelo anterior. Próxima IA: {MODELOS_DISPONIVEIS[indice_modelo]}", i+1, total_lotes+1)
                 else:
-                    ultimo_erro = "A IA não retornou uma lista JSON."
-            except Exception as e_json:
-                ultimo_erro = str(e_json).lower()
-                
-                if '429' in ultimo_erro or 'exhausted' in ultimo_erro or 'quota' in ultimo_erro:
-                    if indice_modelo < len(MODELOS_DISPONIVEIS) - 1:
-                        indice_modelo += 1
-                        novo_modelo = MODELOS_DISPONIVEIS[indice_modelo]
-                        progress_callback(f"⚠️ Cota do modelo esgotada! Trocando rota para: {novo_modelo}", i+1, total_lotes+1)
-                        import time
-                        time.sleep(2)  # Pausa antes da proxima chamada pro novo modelo
-                        continue  # Tenta novamente caindo fora do sleep basico
-                elif '404' in ultimo_erro or 'not found' in ultimo_erro:
-                    # Se o modelo dinamico for incompativel c/ v1beta textual
-                    if indice_modelo < len(MODELOS_DISPONIVEIS) - 1:
-                        indice_modelo += 1
-                        novo_modelo = MODELOS_DISPONIVEIS[indice_modelo]
-                        progress_callback(f"⚠️ Modelo rejeitado pela API (404). Rotacionando para: {novo_modelo}", i+1, total_lotes+1)
-                        continue
-                elif '408 timeout' in ultimo_erro or 'timeout' in ultimo_erro:
-                    # Se congelou feio, força pular pro proximo modelo tambem caso reste repeticoes!
-                    if indice_modelo < len(MODELOS_DISPONIVEIS) - 1:
-                        indice_modelo += 1
-                        novo_modelo = MODELOS_DISPONIVEIS[indice_modelo]
-                        progress_callback(f"⏳ Tempo Excedido! O modelo congelou. Trocando rota para: {novo_modelo}", i+1, total_lotes+1)
-                        continue
-                
-                import time
-                time.sleep(2) # Espera padrao antes de tentar mesmo json parse array novamente
-                
-        if not sucesso:
-            raise Exception(f"Falha repetida na formatação do texto da IA após {max_retries} tentativas (Lote {i+1}).\nDetalhes:\n{ultimo_erro}")
+                    # Fim da linha
+                    raise Exception(f"Falha total após esgotar todos os modelos ({len(MODELOS_DISPONIVEIS)}). Última falha: {ultimo_erro}")
 
         # TEMPORIZADOR ANTI-LIMIT (Limites Free Tier do Gemini 2.5 Flash: 15 RPM ou 5 RPM dependendo do país)
         # Vamos rodar no maximo um request a cada ~14 a 15 segundos para dar folga.
