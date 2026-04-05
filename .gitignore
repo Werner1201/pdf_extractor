@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 venv/
 .venv/
+.github
 
 # Proteção de Configurações e Chaves Seguras
 .env
